@@ -1,6 +1,12 @@
+import { createRoot } from 'react-dom/client';
 import { useState } from 'react';
 import { FiDownload, FiCopy, FiMail, FiCheck, FiPackage } from 'react-icons/fi';
 import { toast } from 'react-toastify';
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
+import TicketDesigner from './TicketDesigner';
 
 const TicketGenerator = ({ event, tickets = [], ticketTemplate }) => {
   const [selectedTickets, setSelectedTickets] = useState([]);
@@ -57,14 +63,45 @@ const TicketGenerator = ({ event, tickets = [], ticketTemplate }) => {
     }
   };
   
-  const downloadZip = () => {
-    // In a real app, this would download a ZIP file with all generated tickets
-    toast.info('Downloading ZIP file with all tickets...');
-    setTimeout(() => {
-      toast.success('Tickets downloaded successfully');
-    }, 1500);
-  };
+  const downloadZip = async () => {
+    if (generatedTickets.length === 0) {
+      toast.error('No tickets to download');
+      return;
+    }
   
+    const zip = new JSZip();
+    const promises = generatedTickets.map(async (ticket) => {
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      const root = createRoot(container);
+      root.render(<TicketDesigner event={event} renderTicket={ticket} />);
+  
+      // Wait for the container to be fully rendered
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+  
+      const canvas = await html2canvas(container);
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF({
+        orientation: 'landscape',
+        unit: 'px',
+        format: [canvas.width, canvas.height],
+      });
+  
+      pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+      const pdfBlob = pdf.output('blob');
+      zip.file(`${ticket.attendeeName}_${event.name}.pdf`, pdfBlob);
+  
+      root.unmount();
+      document.body.removeChild(container);
+    });
+  
+    await Promise.all(promises);
+  
+    zip.generateAsync({ type: 'blob' }).then((content) => {
+      saveAs(content, `${event.name}_tickets.zip`);
+      toast.success('Tickets downloaded successfully');
+    });
+  };
   const emailTickets = () => {
     // In a real app, this would send emails with tickets to attendees
     toast.info('Sending tickets via email...');
@@ -214,7 +251,7 @@ const TicketGenerator = ({ event, tickets = [], ticketTemplate }) => {
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {generatedTickets.map((ticket) => (
-                    <div key={ticket.id} className="border border-gray-200 rounded-lg overflow-hidden">
+                    <div key={ticket.id} id={`ticket-${ticket.id}`} className="border border-gray-200 rounded-lg overflow-hidden">
                       <div className="p-4">
                         <div className="flex justify-between items-start mb-4">
                           <div>

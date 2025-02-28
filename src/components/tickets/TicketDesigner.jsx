@@ -1,7 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
 import { FiImage, FiType, FiGrid, FiLayers, FiSave, FiDownload, FiEye, FiMove, FiPlus, FiTrash2, FiAlignLeft, FiAlignCenter, FiAlignRight, FiUpload } from 'react-icons/fi';
 import { toast } from 'react-toastify';
-
+import Modal from 'react-modal'; // Ensure you have react-modal installed
+import './TicketDesigner.css';
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 const TicketDesigner = ({ event, onSave }) => {
   const [canvas, setCanvas] = useState({
     width: 1000,
@@ -105,21 +110,12 @@ const TicketDesigner = ({ event, onSave }) => {
     'Impact',
   ]);
   
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+
   // Handle element selection
   const handleElementClick = (e, element) => {
     e.stopPropagation();
     setSelectedElement(element);
-    
-    // Calculate drag offset
-    const rect = e.currentTarget.getBoundingClientRect();
-    const canvasRect = canvasRef.current.getBoundingClientRect();
-    
-    setDragOffset({
-      x: e.clientX - (rect.left - canvasRect.left),
-      y: e.clientY - (rect.top - canvasRect.top),
-    });
-    
-    setIsDragging(true);
   };
   
   // Handle canvas click (deselect elements)
@@ -138,7 +134,7 @@ const TicketDesigner = ({ event, onSave }) => {
     // Update element position
     setElements(elements.map(el => 
       el.id === selectedElement.id 
-        ? { ...el, x: Math.max(0, Math.min(canvas.width - 20, x)), y: Math.max(0, Math.min(canvas.height - 20, y)) }
+        ? { ...el, x: Math.max(0, Math.min(canvas.width - (el.width || 0), x)), y: Math.max(0, Math.min(canvas.height - (el.height || 0), y)) }
         : el
     ));
   };
@@ -245,34 +241,42 @@ const TicketDesigner = ({ event, onSave }) => {
   const loadTemplate = (templateId) => {
     // In a real app, this would load from a database
     toast.info(`Loading template: ${templateId}`);
-    
-    // For demo purposes, we'll just change the background color
+
+    // For demo purposes, we'll just change the background color and elements
     if (templateId === 'vip') {
       setCanvas({
         ...canvas,
         background: '#fef3c7',
       });
+      setElements([
+        // Define elements for VIP template
+      ]);
     } else if (templateId === 'concert') {
       setCanvas({
         ...canvas,
         background: '#dbeafe',
       });
+      setElements([
+        // Define elements for Concert template
+      ]);
     } else {
       setCanvas({
         ...canvas,
         background: '#ffffff',
       });
+      setElements([
+        // Define elements for Default template
+      ]);
     }
   };
-  
+
   // Preview ticket
   const previewTicket = () => {
-    // In a real app, this would generate a preview with actual data
-    toast.info('Generating preview...');
-    setTimeout(() => {
-      toast.success('Preview generated');
-      // Would open a modal with the preview
-    }, 1000);
+    setIsPreviewOpen(true);
+  };
+
+  const closePreview = () => {
+    setIsPreviewOpen(false);
   };
   
   // Export template
@@ -289,6 +293,102 @@ const TicketDesigner = ({ event, onSave }) => {
     document.body.removeChild(link);
     
     toast.success('Template exported successfully');
+  };
+
+  const handleCropSizeChange = (aspectRatio) => {
+    const newHeight = canvas.width / aspectRatio;
+    setCanvas({
+      ...canvas,
+      height: newHeight,
+    });
+  };
+
+  const handleElementMouseDown = (e, element) => {
+    e.stopPropagation();
+    setSelectedElement(element);
+
+    // Calculate drag offset
+    const rect = e.currentTarget.getBoundingClientRect();
+    const canvasRect = canvasRef.current.getBoundingClientRect();
+
+    setDragOffset({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    });
+
+    setIsDragging(true);
+  };
+
+  const exportToPDF = async (username, eventName) => {
+    const input = canvasRef.current;
+    const canvas = await html2canvas(input);
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF({
+      orientation: 'landscape',
+      unit: 'px',
+      format: [canvas.width, canvas.height],
+    });
+  
+    pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+    pdf.save(`${username}_${eventName}.pdf`);
+  };
+  const exportToZIP = async (username, eventName) => {
+    const zip = new JSZip();
+    const input = canvasRef.current;
+    const canvas = await html2canvas(input);
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF({
+      orientation: 'landscape',
+      unit: 'px',
+      format: [canvas.width, canvas.height],
+    });
+  
+    pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+    const pdfBlob = pdf.output('blob');
+  
+    zip.file(`${username}_${eventName}.pdf`, pdfBlob);
+    zip.generateAsync({ type: 'blob' }).then((content) => {
+      saveAs(content, `${username}_${eventName}.zip`);
+    });
+  };
+
+  const renderTicket = (ticket) => {
+    return (
+      <div
+        className="relative"
+        style={{
+          width: `${canvas.width}px`,
+          height: `${canvas.height}px`,
+          backgroundColor: canvas.background,
+          backgroundImage: canvas.backgroundImage ? `url(${canvas.backgroundImage})` : 'none',
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+        }}
+      >
+        {elements.map(element => (
+          <div
+            key={element.id}
+            style={{
+              position: 'absolute',
+              left: `${element.x}px`,
+              top: `${element.y}px`,
+              fontSize: `${element.fontSize}px`,
+              fontFamily: element.fontFamily,
+              color: element.color,
+              fontWeight: element.fontWeight,
+              textAlign: element.textAlign || 'left',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {element.type === 'text' ? element.content
+              .replace('{attendee_name}', ticket.attendeeName)
+              .replace('{ticket_type}', ticket.ticketType)
+              .replace('{ticket_id}', ticket.id)
+              : <img src={ticket.qrCode} alt="QR Code" style={{ width: element.width, height: element.height }} />}
+          </div>
+        ))}
+      </div>
+    );
   };
   
   return (
@@ -344,6 +444,33 @@ const TicketDesigner = ({ event, onSave }) => {
                     onChange={handleBackgroundUpload}
                   />
                 </label>
+              </div>
+            </div>
+
+            <div className="border border-gray-200 rounded-lg p-4">
+              <h3 className="text-md font-medium text-gray-800 mb-3">Crop Size</h3>
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => handleCropSizeChange(9 / 16)}
+                  className="w-full flex items-center justify-center px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  9:16
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleCropSizeChange(4 / 3)}
+                  className="w-full flex items-center justify-center px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  4:3
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleCropSizeChange(1)}
+                  className="w-full flex items-center justify-center px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  1:1
+                </button>
               </div>
             </div>
             
@@ -622,7 +749,8 @@ const TicketDesigner = ({ event, onSave }) => {
                       top: `${element.y}px`,
                       padding: '4px',
                     }}
-                    onMouseDown={(e) => handleElementClick(e, element)}
+                    onMouseDown={(e) => handleElementMouseDown(e, element)}
+                    onClick={(e) => handleElementClick(e, element)}
                   >
                     {element.type === 'text' && (
                       <div
@@ -671,6 +799,48 @@ const TicketDesigner = ({ event, onSave }) => {
           </div>
         </div>
       </div>
+      <Modal
+        isOpen={isPreviewOpen}
+        onRequestClose={closePreview}
+        contentLabel="Ticket Preview"
+        className="modal"
+        overlayClassName="overlay"
+        style={{ content: { height: '80vh' } }}
+      >
+        <div className="preview-container">
+          <div
+            className="relative preview-size"
+            style={{
+              width: `${canvas.width}px`,
+              height: `${canvas.height}px`,
+              backgroundColor: canvas.background,
+              backgroundImage: canvas.backgroundImage ? `url(${canvas.backgroundImage})` : 'none',
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+            }}
+          >
+            {elements.map(element => (
+              <div
+                key={element.id}
+                style={{
+                  position: 'absolute',
+                  left: `${element.x}px`,
+                  top: `${element.y}px`,
+                  fontSize: `${element.fontSize}px`,
+                  fontFamily: element.fontFamily,
+                  color: element.color,
+                  fontWeight: element.fontWeight,
+                  textAlign: element.textAlign || 'left',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {element.type === 'text' ? element.content.replace('{attendee_name}', 'John Doe').replace('{ticket_type}', 'VIP').replace('{ticket_id}', '123456') : 'Sample QR Code'}
+              </div>
+            ))}
+          </div>
+          <button onClick={closePreview} className="close-button">Close</button>
+        </div>
+      </Modal>
     </div>
   );
 };
